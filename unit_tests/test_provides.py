@@ -72,17 +72,22 @@ class TestCosAgentProvides(test_utils.PatchHelper):
         expected_path = "/metrics"
         expected_host = "127.0.0.1"
         expected_job_name = "test_job"
+        expected_dashboard = "someB64hash"
         full_job_name = f"{self.ep.endpoint_name}_{endpoint_index}_{expected_job_name}"
         metric_endpoint = provides.MetricsEndpoint(
             port=expected_port,
             path=expected_path,
             host=expected_host,
+            dashboards_dir="/foo/bar/",
             job_name=expected_job_name,
+        )
+        self.patch_object(
+            self.ep, "_encode_dashboards", return_value=[expected_dashboard]
         )
 
         self.ep.update_cos_agent([metric_endpoint])
         expect_rel_data = {
-            "dashboards": [],
+            "dashboards": [expected_dashboard],
             "log_alert_rules": {},
             "log_slots": [],
             "metrics_alert_rules": {},
