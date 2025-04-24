@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import inspect
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, List
 
 from charms import reactive
+from cosl import DashboardPath40UID, LZMABase64
 
 from charmhelpers.core import hookenv
 
@@ -31,6 +34,7 @@ class MetricsEndpoint:
     # localhost should be a sane default
     host: str = "localhost"
     job_name: str = "default"
+    dashboards_dir: Optional[str] = None
     _job_prefix: str = ""
 
     @property
@@ -80,15 +84,17 @@ class CosAgentProvides(reactive.Endpoint):
     ):
         metrics_endpoints = metrics_endpoints or []
         scrape_config = []
+        dashboards = []
         for index, endpoint in enumerate(metrics_endpoints):
             endpoint.job_prefix = self.expand_name("{endpoint_name}_") + f"{index}_"
             scrape_config.append(endpoint.to_dict())
+            dashboards.extend(self._encode_dashboards(endpoint.dashboards_dir))
         hookenv.log(f"Updating scrape config: {scrape_config}", level=hookenv.DEBUG)
 
         data = CosAgentProviderUnitData(
             metrics_alert_rules={},
             log_alert_rules={},
-            dashboards=[],
+            dashboards=dashboards,
             metrics_scrape_jobs=scrape_config,
             log_slots=[],
             tracing_protocols=[],
@@ -96,3 +102,37 @@ class CosAgentProvides(reactive.Endpoint):
 
         for rel in self.relations:
             rel.to_publish[data.KEY] = data.model_dump()
+
+    @staticmethod
+    def _encode_dashboards(dashboard_dir: Optional[str]) -> List[str]:
+        """Prepare Grafana dashboards so that they may be shared via relation.
+
+        :param dashboard_dir: Path to a directory that holds exported (.json)
+                               grafana dashboard files.
+        """
+        if dashboard_dir is None:
+            return []
+
+        dashboards: List[str] = []
+        charm_name = hookenv.charm_name()
+        for path in Path(dashboard_dir).glob("*.json"):
+            hookenv.log(f"Processing dashboard: {path}", level=hookenv.DEBUG)
+            with open(path, "rt") as dashboard_file:
+                dashboard = json.load(dashboard_file)
+            rel_path = str(
+                path.relative_to(hookenv.charm_dir()) if path.is_absolute() else path
+            )
+            # COSAgentProvider is somewhat analogous to GrafanaDashboardProvider.
+            # We need to overwrite the uid here because there is currently no other
+            # way to communicate the dashboard path separately.
+            # https://github.com/canonical/grafana-k8s-operator/pull/363
+            dashboard["uid"] = DashboardPath40UID.generate(charm_name, rel_path)
+
+            # Add tags
+            tags: List[str] = dashboard.get("tags", [])
+            if not any(tag.startswith("charm: ") for tag in tags):
+                tags.append(f"charm: {charm_name}")
+            dashboard["tags"] = tags
+
+            dashboards.append(LZMABase64.compress(json.dumps(dashboard)))
+        return dashboards
