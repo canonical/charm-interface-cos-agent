@@ -19,7 +19,8 @@ from pathlib import Path
 from typing import Optional, List
 
 from charms import reactive
-from cosl import DashboardPath40UID, LZMABase64
+from cosl import DashboardPath40UID, JujuTopology, LZMABase64
+from cosl.rules import AlertRules
 
 from charmhelpers.core import hookenv
 
@@ -35,6 +36,7 @@ class MetricsEndpoint:
     host: str = "localhost"
     job_name: str = "default"
     dashboards_dir: Optional[str] = None
+    metrics_alert_rules_path: Optional[str] = None
     _job_prefix: str = ""
 
     @property
@@ -85,14 +87,19 @@ class CosAgentProvides(reactive.Endpoint):
         metrics_endpoints = metrics_endpoints or []
         scrape_config = []
         dashboards = []
+        metrics_alert_rules = AlertRules(query_type="promql", topology=self._topology)
         for index, endpoint in enumerate(metrics_endpoints):
             endpoint.job_prefix = self.expand_name("{endpoint_name}_") + f"{index}_"
             scrape_config.append(endpoint.to_dict())
             dashboards.extend(self._encode_dashboards(endpoint.dashboards_dir))
+            if endpoint.metrics_alert_rules_path:
+                metrics_alert_rules.add_path(
+                    endpoint.metrics_alert_rules_path, recursive=True
+                )
         hookenv.log(f"Updating scrape config: {scrape_config}", level=hookenv.DEBUG)
 
         data = CosAgentProviderUnitData(
-            metrics_alert_rules={},
+            metrics_alert_rules=metrics_alert_rules.as_dict(),
             log_alert_rules={},
             dashboards=dashboards,
             metrics_scrape_jobs=scrape_config,
@@ -102,6 +109,21 @@ class CosAgentProvides(reactive.Endpoint):
 
         for rel in self.relations:
             rel.to_publish[data.KEY] = data.model_dump()
+
+    @property
+    def _topology(self) -> JujuTopology:
+        """Build JujuTopology from charmhelpers primitives.
+
+        Reactive charms lack an ops.CharmBase, so JujuTopology.from_charm
+        is unavailable. This mirrors from_charm using hookenv accessors.
+        """
+        return JujuTopology(
+            model=hookenv.model_name(),
+            model_uuid=hookenv.model_uuid(),
+            application=hookenv.application_name(),
+            unit=hookenv.local_unit(),
+            charm_name=hookenv.charm_name(),
+        )
 
     @staticmethod
     def _encode_dashboards(dashboard_dir: Optional[str]) -> List[str]:

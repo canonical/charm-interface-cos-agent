@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import tempfile
+import textwrap
+from pathlib import Path
+
 import charms_openstack.test_utils as test_utils
 
 from src import provides
@@ -109,4 +113,40 @@ class TestCosAgentProvides(test_utils.PatchHelper):
         relation_config_key = provides.CosAgentProviderUnitData.KEY
         self.assertEqual(
             self.relation_mock.to_publish.get(relation_config_key), expect_rel_data
+        )
+
+    def test_update_cos_agent_forwards_alert_rules(self):
+        self.maxDiff = None
+        rules_dir = Path(tempfile.mkdtemp())
+        (rules_dir / "alerts.yml").write_text(textwrap.dedent("""
+                groups:
+                  - name: test
+                    rules:
+                      - alert: TestDown
+                        expr: up == 0
+                        for: 5m
+                        labels:
+                          severity: critical
+                """))
+        self.patch_object(self.ep, "_encode_dashboards", return_value=[])
+        metric_endpoint = provides.MetricsEndpoint(
+            port=9476,
+            path="/metrics",
+            host="127.0.0.1",
+            job_name="test_job",
+            metrics_alert_rules_path=str(rules_dir),
+        )
+
+        self.ep.update_cos_agent([metric_endpoint])
+        rel_data = self.relation_mock.to_publish.get(
+            provides.CosAgentProviderUnitData.KEY
+        )
+        rules = rel_data["metrics_alert_rules"]
+        rule = rules["groups"][0]["rules"][0]
+        self.assertEqual(rule["alert"], "TestDown")
+        self.assertEqual(rule["labels"]["juju_model"], "mymodel")
+        self.assertEqual(rule["labels"]["juju_application"], "myapp")
+        self.assertEqual(
+            rule["labels"]["juju_model_uuid"],
+            "47bfebeb-92ee-4cfa-b768-cd29749d33ac",
         )

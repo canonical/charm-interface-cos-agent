@@ -15,7 +15,6 @@
 import sys
 from unittest import mock
 
-
 sys.modules["charmhelpers.contrib.openstack.utils"] = mock.MagicMock()
 sys.modules["charmhelpers.contrib.network.ip"] = mock.MagicMock()
 
