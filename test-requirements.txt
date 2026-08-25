@@ -1,3 +1,4 @@
+setuptools<81
 charms.reactive
 flake8
 black
